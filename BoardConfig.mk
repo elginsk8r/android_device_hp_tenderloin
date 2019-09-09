@@ -134,6 +134,9 @@ TARGET_PROVIDES_RELEASETOOLS := true
 TARGET_RELEASETOOL_IMG_FROM_TARGET_SCRIPT := $(PLATFORM_PATH)/releasetools/tenderloin_img_from_target_files
 TARGET_RELEASETOOL_OTA_FROM_TARGET_SCRIPT := $(PLATFORM_PATH)/releasetools/tenderloin_ota_from_target_files
 
+# SELinux
+BOARD_SEPOLICY_DIRS += $(PLATFORM_PATH)/sepolicy
+
 # Wifi
 BOARD_WLAN_DEVICE                := ath6kl
 BOARD_WPA_SUPPLICANT_DRIVER      := NL80211
