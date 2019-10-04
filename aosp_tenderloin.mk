@@ -14,6 +14,7 @@
 
 # Inherit from those products. Most specific first.
 $(call inherit-product, $(SRC_TARGET_DIR)/product/aosp_base.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/languages_full.mk)
 
 # Set those variables here to overwrite the inherited values.
 PRODUCT_NAME := aosp_tenderloin
@@ -25,6 +26,7 @@ PRODUCT_RESTRICT_VENDOR_FILES := false
 
 # Inherit from tenderloin device
 $(call inherit-product, device/hp/tenderloin/device.mk)
+$(call inherit-product-if-exists, vendor/hp/tenderloin/tenderloin-vendor.mk)
 
 PRODUCT_PACKAGES += \
     Launcher3

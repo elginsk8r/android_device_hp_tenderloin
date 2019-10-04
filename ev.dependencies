@@ -1,7 +1,12 @@
 [
  {
-    "repository": "android_device_hp_tenderloin-common",
-    "target_path": "device/hp/tenderloin-common",
-    "dep_type": "device"
+    "repository": "android_kernel_htc_msm8960",
+    "target_path": "kernel/htc/msm8960",
+    "dep_type": "kernel"
+ },
+ {
+    "repository": "android_hardware_atheros",
+    "target_path": "hardware/atheros",
+    "dep_type": "hardware"
  }
 ]

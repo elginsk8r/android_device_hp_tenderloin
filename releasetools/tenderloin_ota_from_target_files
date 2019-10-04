@@ -1,0 +1,296 @@
+#!/usr/bin/env python
+#
+# Copyright (C) 2008 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import sys
+import os
+import tenderloin_common as common
+
+LOCAL_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+RELEASETOOLS_DIR = os.path.abspath(os.path.join(LOCAL_DIR, '../../../build/tools/releasetools'))
+
+# Add releasetools directory to python path
+sys.path.append(RELEASETOOLS_DIR)
+
+# Import the existing file so we just have to rewrite the modules we need.
+# This is a nasty hack as the filename doesn't end in .py, but it works
+filename = os.path.join(RELEASETOOLS_DIR, "ota_from_target_files")
+ota_from_target_files = common.load_module_from_file('ota_from_target_files', filename)
+
+from ota_from_target_files import *
+import tenderloin_edify_generator as edify_generator
+
+__doc__ = ota_from_target_files.__doc__
+
+def WriteFullOTAPackage(input_zip, output_file):
+  target_info = BuildInfo(OPTIONS.info_dict, OPTIONS.oem_dicts)
+
+  # We don't know what version it will be installed on top of. We expect the API
+  # just won't change very often. Similarly for fstab, it might have changed in
+  # the target build.
+  target_api_version = target_info["recovery_api_version"]
+  script = edify_generator.EdifyGenerator(target_api_version, target_info)
+
+  if target_info.oem_props and not OPTIONS.oem_no_mount:
+    target_info.WriteMountOemScript(script)
+
+  metadata = GetPackageMetadata(target_info)
+
+  if not OPTIONS.no_signing:
+    staging_file = common.MakeTempFile(suffix='.zip')
+  else:
+    staging_file = output_file
+
+  output_zip = zipfile.ZipFile(
+      staging_file, "w", compression=zipfile.ZIP_DEFLATED)
+
+  device_specific = common.DeviceSpecificParams(
+      input_zip=input_zip,
+      input_version=target_api_version,
+      output_zip=output_zip,
+      script=script,
+      input_tmp=OPTIONS.input_tmp,
+      metadata=metadata,
+      info_dict=OPTIONS.info_dict)
+
+  assert HasRecoveryPatch(input_zip)
+
+  # Assertions (e.g. downgrade check, device properties check).
+  # ts = target_info.GetBuildProp("ro.build.date.utc")
+  # ts_text = target_info.GetBuildProp("ro.build.date")
+  # script.AssertOlderBuild(ts, ts_text)
+
+  target_info.WriteDeviceAssertions(script, OPTIONS.oem_no_mount)
+  device_specific.FullOTA_Assertions()
+
+  # Two-step package strategy (in chronological order, which is *not*
+  # the order in which the generated script has things):
+  #
+  # if stage is not "2/3" or "3/3":
+  #    write recovery image to boot partition
+  #    set stage to "2/3"
+  #    reboot to boot partition and restart recovery
+  # else if stage is "2/3":
+  #    write recovery image to recovery partition
+  #    set stage to "3/3"
+  #    reboot to recovery partition and restart recovery
+  # else:
+  #    (stage must be "3/3")
+  #    set stage to ""
+  #    do normal full package installation:
+  #       wipe and install system, boot image, etc.
+  #       set up system to update recovery partition on first boot
+  #    complete script normally
+  #    (allow recovery to mark itself finished and reboot)
+
+  # recovery_img = common.GetBootableImage("recovery.img", "recovery.img",
+  #                                        OPTIONS.input_tmp, "RECOVERY")
+  if OPTIONS.two_step:
+    if not target_info.get("multistage_support"):
+      assert False, "two-step packages not supported by this build"
+    fs = target_info["fstab"]["/misc"]
+    assert fs.fs_type.upper() == "EMMC", \
+        "two-step packages only supported on devices with EMMC /misc partitions"
+    bcb_dev = {"bcb_dev": fs.device}
+    common.ZipWriteStr(output_zip, "recovery.img", recovery_img.data)
+    script.AppendExtra("""
+if get_stage("%(bcb_dev)s") == "2/3" then
+""" % bcb_dev)
+
+    # Stage 2/3: Write recovery image to /recovery (currently running /boot).
+    script.Comment("Stage 2/3")
+    # script.WriteRawImage("/recovery", "recovery.img")
+    script.AppendExtra("""
+set_stage("%(bcb_dev)s", "3/3");
+reboot_now("%(bcb_dev)s", "recovery");
+else if get_stage("%(bcb_dev)s") == "3/3" then
+""" % bcb_dev)
+
+    # Stage 3/3: Make changes.
+    script.Comment("Stage 3/3")
+
+  # Dump fingerprints
+  script.Print("Target: {}".format(target_info.fingerprint))
+
+# MOTD during flash added for Evervolv by cocide
+  if (OPTIONS.motd != None):
+    eachRawMotd = OPTIONS.motd.split("\\n")
+    for eachMotd in eachRawMotd:
+      rawMotd = eachMotd.split()
+      sizedMotd = []
+      for word in rawMotd:
+        sizedMotd += [word[i:i+OPTIONS.motdLim] for i in range(0, len(word), OPTIONS.motdLim)]
+      sizedMotd.reverse()
+      if len(sizedMotd):
+        motdLine = [sizedMotd.pop()]
+      else:
+        motdLine = [""]
+      sizedMotd.reverse()
+      for word in sizedMotd:
+        if ( (motdLine[len(motdLine)-1].__len__() + word.__len__()) < 48):
+          motdLine[len(motdLine)-1] = motdLine[len(motdLine)-1] + " " + word
+        else:
+          motdLine.append(word)
+      for line in motdLine:
+        script.Print(line)
+
+  script.AppendExtra("ifelse(is_mounted(\"/system\"), unmount(\"/system\"));")
+  device_specific.FullOTA_InstallBegin()
+
+  CopyInstallTools(output_zip)
+  script.UnpackPackageDir("install", "/tmp/install")
+  script.SetPermissionsRecursive("/tmp/install", 0, 0, 0755, 0644, None, None)
+  script.SetPermissionsRecursive("/tmp/install/bin", 0, 0, 0755, 0755, None, None)
+
+  if OPTIONS.backuptool:
+    script.Mount("/system")
+    script.RunBackup("backup")
+    script.Unmount("/system")
+
+  system_progress = 0.75
+
+  if OPTIONS.wipe_user_data:
+    system_progress -= 0.1
+  if HasVendorPartition(input_zip):
+    system_progress -= 0.1
+
+  script.ShowProgress(system_progress, 0)
+
+  # See the notes in WriteBlockIncrementalOTAPackage().
+  allow_shared_blocks = target_info.get('ext4_share_dup_blocks') == "true"
+
+  # Full OTA is done as an "incremental" against an empty source image. This
+  # has the effect of writing new data from the package to the entire
+  # partition, but lets us reuse the updater code that writes incrementals to
+  # do it.
+  system_tgt = common.GetSparseImage("system", OPTIONS.input_tmp, input_zip,
+                                     allow_shared_blocks)
+  system_tgt.ResetFileMap()
+  system_diff = common.BlockDifference("system", system_tgt, src=None)
+  system_diff.WriteScript(script, output_zip)
+
+  boot_img = common.GetBootableImage(
+      "boot.img", "boot.img", OPTIONS.input_tmp, "BOOT")
+
+  if HasVendorPartition(input_zip):
+    script.ShowProgress(0.1, 0)
+
+    vendor_tgt = common.GetSparseImage("vendor", OPTIONS.input_tmp, input_zip,
+                                       allow_shared_blocks)
+    vendor_tgt.ResetFileMap()
+    vendor_diff = common.BlockDifference("vendor", vendor_tgt)
+    vendor_diff.WriteScript(script, output_zip)
+
+  AddCompatibilityArchiveIfTrebleEnabled(input_zip, output_zip, target_info)
+
+  device_specific.FullOTA_PostValidate()
+
+  script.AppendExtra('run_program("/tmp/install/bin/e2fsck_static", "-fy", "/dev/store/cm-system");')
+  script.AppendExtra('run_program("/tmp/install/bin/resize2fs_static", "/dev/store/cm-system");')
+  script.AppendExtra('run_program("/tmp/install/bin/e2fsck_static", "-fy", "/dev/store/cm-system");')
+
+  if OPTIONS.backuptool:
+    script.ShowProgress(0.02, 10)
+    script.Mount("/system")
+    script.RunBackup("restore")
+    script.Unmount("/system")
+
+  script.ShowProgress(0.05, 5)
+
+  boot_img = open(OPTIONS.device_out + "/boot.img", "r")
+  common.ZipWriteStr(output_zip, "boot.img", boot_img.read())
+  boot_img.close()
+
+  script.Mount("/boot")
+  # use a generic name, since we can only fit one rom at a time
+  script.UnpackPackageFile("boot.img", "/boot/uImage.Android")
+
+  tptoolbox_cfg = open(OPTIONS.device_out + "/tptoolbox.cfg")
+  common.ZipWriteStr(output_zip, "tptoolbox.cfg", tptoolbox_cfg.read())
+  tptoolbox_cfg.close()
+
+  moboot_tga = open(OPTIONS.device_out + "/moboot.splash.Android.tga")
+  common.ZipWriteStr(output_zip, "moboot.splash.Android.tga", moboot_tga.read())
+  moboot_tga.close()
+
+  moboot_default = open(OPTIONS.device_out + "/moboot.default")
+  common.ZipWriteStr(output_zip, "moboot.default", moboot_default.read())
+  moboot_default.close()
+
+  script.UnpackPackageFile("moboot.splash.Android.tga", "/boot/moboot.splash.Android.tga")
+  script.UnpackPackageFile("moboot.default", "/boot/moboot.default")
+
+  # Delete other uImage traces.
+  script.AppendExtra(('run_program("/sbin/busybox", "rm", "/boot/uImage.CyanogenMod");'))
+  script.AppendExtra(('run_program("/sbin/busybox", "rm", "/boot/moboot.splash.CyanogenMod.tga");'))
+  script.AppendExtra(('run_program("/sbin/busybox", "rm", "/boot/uImage.Dirty-Unicorn");'))
+  script.AppendExtra(('run_program("/sbin/busybox", "rm", "/boot/uImage.Evervolv");'))
+  script.AppendExtra(('run_program("/sbin/busybox", "rm", "/boot/moboot.splash.Evervolv.tga");'))
+
+  script.ShowProgress(0.2, 10)
+  device_specific.FullOTA_InstallEnd()
+
+  if OPTIONS.extra_script is not None:
+    script.AppendExtra(OPTIONS.extra_script)
+
+  script.UnmountAll()
+
+  if OPTIONS.wipe_user_data:
+    script.ShowProgress(0.1, 10)
+    script.FormatPartition("/data")
+
+  if OPTIONS.two_step:
+    script.AppendExtra("""
+set_stage("%(bcb_dev)s", "");
+""" % bcb_dev)
+    script.AppendExtra("else\n")
+
+    # Stage 1/3: Nothing to verify for full OTA. Write recovery image to /boot.
+    script.Comment("Stage 1/3")
+    _WriteRecoveryImageToBoot(script, output_zip)
+
+    script.AppendExtra("""
+set_stage("%(bcb_dev)s", "2/3");
+reboot_now("%(bcb_dev)s", "");
+endif;
+endif;
+""" % bcb_dev)
+
+  script.SetProgress(1)
+  script.AddToZip(input_zip, output_zip, input_path=OPTIONS.updater_binary)
+  metadata["ota-required-cache"] = str(script.required_cache)
+
+  # We haven't written the metadata entry, which will be done in
+  # FinalizeMetadata.
+  common.ZipClose(output_zip)
+
+  needed_property_files = (
+      NonAbOtaPropertyFiles(),
+  )
+  FinalizeMetadata(metadata, staging_file, output_file, needed_property_files)
+
+ota_from_target_files.WriteFullOTAPackage = WriteFullOTAPackage
+
+if __name__ == '__main__':
+  try:
+    # Ugly hacks are ugly
+    OPTIONS.device_out = os.path.dirname(sys.argv[-1])
+    common.CloseInheritedPipes()
+    main(sys.argv[1:])
+  except common.ExternalError as e:
+    print("\n   ERROR: %s\n" % (e,))
+    sys.exit(1)
+  finally:
+    common.Cleanup()
