@@ -1,5 +1,5 @@
 # Inherit AOSP device configuration for inc.
-$(call inherit-product, device/hp/tenderloin/full_tenderloin.mk)
+$(call inherit-product, device/hp/tenderloin/aosp_tenderloin.mk)
 
 # Inherit some common evervolv stuff.
 $(call inherit-product, vendor/ev/config/common_full_tablet_wifionly.mk)

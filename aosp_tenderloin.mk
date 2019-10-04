@@ -13,14 +13,18 @@
 # limitations under the License.
 
 # Inherit from those products. Most specific first.
-$(call inherit-product, $(SRC_TARGET_DIR)/product/full_base.mk)
-
-# Inherit from tenderloin device
-$(call inherit-product, device/hp/tenderloin/device.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/aosp_base.mk)
 
 # Set those variables here to overwrite the inherited values.
-PRODUCT_NAME := full_tenderloin
+PRODUCT_NAME := aosp_tenderloin
 PRODUCT_DEVICE := tenderloin
 PRODUCT_BRAND := HP
 PRODUCT_MANUFACTURER := HP
 PRODUCT_MODEL := Touchpad
+PRODUCT_RESTRICT_VENDOR_FILES := false
+
+# Inherit from tenderloin device
+$(call inherit-product, device/hp/tenderloin/device.mk)
+
+PRODUCT_PACKAGES += \
+    Launcher3
