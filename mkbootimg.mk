@@ -17,6 +17,14 @@
 ifeq ($(BOARD_USES_UBOOT),true)
 ifeq ($(BOARD_USES_UBOOT_MULTIIMAGE),true)
 
+ifeq ($(strip $(TARGET_CUSTOM_MKIMAGE)),)
+MKIMAGE_NAME := mkimage
+else
+MKIMAGE_NAME := $(TARGET_CUSTOM_MKIMAGE)
+endif
+
+MKIMAGE := $(HOST_OUT_EXECUTABLES)/$(MKIMAGE_NAME)$(HOST_EXECUTABLE_SUFFIX)
+
 image_name := $(TARGET_DEVICE) $(PLATFORM_VERSION)
 image_name_ramdisk := $(image_name) Ramdisk
 image_name_boot := $(image_name) Android
