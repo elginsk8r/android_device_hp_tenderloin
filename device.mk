@@ -151,9 +151,9 @@ PRODUCT_PACKAGES += \
     lights.tenderloin
 
 # LVM
-PRODUCT_PACKAGES += \
-    lvm.static \
-    lvm.conf
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/rootdir/sbin/lvm.static:$(TARGET_ROOT_OUT_SBIN)/lvm.static \
+    $(LOCAL_PATH)/rootdir/etc/lvm.conf:$(TARGET_ROOT_OUT)/lvm.conf
 
 # Media
 PRODUCT_COPY_FILES += \
